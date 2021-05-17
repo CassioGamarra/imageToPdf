@@ -1,20 +1,17 @@
 import java.awt.*;
 import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Base64;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
-import org.apache.pdfbox.pdmodel.PDPageContentStream.AppendMode;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.rendering.ImageType;
 import org.apache.pdfbox.rendering.PDFRenderer;
 
 import javax.imageio.ImageIO;
-import javax.imageio.metadata.IIOMetadata;
 import javax.swing.*;
 
 public class main {
@@ -27,48 +24,45 @@ public class main {
         fileChooser.showOpenDialog(dialog);
         String plantaPDF = fileChooser.getSelectedFile().toString();
 
-        //Selecionar onde salvar a planta convertida
-        fileChooser.setDialogTitle("Selecionar local para salvar a planta em PNG");
-        fileChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY); //Busca apenas o diretório
-        fileChooser.showOpenDialog(dialog);
-        String diretorioPNG = fileChooser.getCurrentDirectory().toString();
-
         //Converte para Imagem e salva o local
-        String plantaConvertida = convertPdfToImage(plantaPDF, diretorioPNG);
+        String plantaConvertida = convertPdfToBase64Image(plantaPDF);
 
         //Selecionar o Carimbo
         fileChooser.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES); //Busca arquivos
         fileChooser.setDialogTitle("Selecionar carimbo em PNG");
         fileChooser.showOpenDialog(dialog);
         String carimbo = fileChooser.getSelectedFile().toString();
+        String carimboB64 = converteImageToBase64(carimbo);
 
-        //Selecionar onde salvar a planta carimbada
-        fileChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        fileChooser.setDialogTitle("Selecionar onde salvar a planta autenticada");
-        fileChooser.showOpenDialog(dialog);
-        String diretorio = fileChooser.getCurrentDirectory().toString();
-
-        System.out.println(plantaPDF);
-        System.out.println(diretorioPNG);
-        System.out.println(carimbo);
-        System.out.println(diretorio);
-        System.out.println(mergeImages(plantaConvertida, carimbo, diretorio));
+        String plantaAutenticada = mergeImagesToPDFBase64(plantaConvertida, carimboB64);
+        //String pdfOriginal = convertPDFTobase64(plantaPDF);
+        //String result = insertImageIntoPDF(plantaAutenticada, pdfOriginal);
+        saveToTxt(plantaAutenticada);
     }
 
-    public static String convertPdfToImage(String sourceDir, String destinationDir) {
+    public static void saveToTxt(String value) {
+        try {
+            FileWriter fileWriter  = new FileWriter("/home/jhonatan/Downloads/plantacarimbada.txt");
+            fileWriter.write(value);
+            fileWriter.close();
+            System.out.println("Arquivo salvo com sucesso!");
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+    }
+
+    public static String convertPdfToBase64Image(String sourceDir) {
         File sourceFile = new File(sourceDir);
         try {
             if(sourceFile.exists()) {
-                PDDocument document = PDDocument.load(sourceFile);
-                PDFRenderer pdfRenderer = new PDFRenderer(document);
-
-                String fileName = sourceFile.getName().replace(".pdf", "");
-                BufferedImage image = pdfRenderer.renderImageWithDPI(0, 300, ImageType.RGB);
-                String location = destinationDir + "/Downloads/" + fileName +".png";
-                File outputfile = new File(location);
-                ImageIO.write(image, "PNG", outputfile);
-                document.close();
-                return location;
+                PDDocument pdDocument = PDDocument.load(sourceFile);
+                PDFRenderer pdfRenderer = new PDFRenderer(pdDocument);
+                BufferedImage bufferedImage = pdfRenderer.renderImageWithDPI(0, 300, ImageType.RGB);
+                ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+                ImageIO.write(bufferedImage, "PNG", outputStream);
+                pdDocument.close();
+                return Base64.getEncoder().encodeToString(outputStream.toByteArray());
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -77,10 +71,17 @@ public class main {
         return "";
     }
 
-    public static String mergeImages(String plantaDir, String carimboDir, String diretorio) {
+    public static String mergeImagesToPDFBase64(String plantaB64, String carimboB64) {
         try {
-            BufferedImage planta = ImageIO.read(new File(plantaDir));
-            BufferedImage carimbo = ImageIO.read(new File(carimboDir));
+            byte[] imageBytes;
+
+            imageBytes = Base64.getDecoder().decode(plantaB64);
+            ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(imageBytes);
+            BufferedImage planta = ImageIO.read(byteArrayInputStream);
+
+            imageBytes = Base64.getDecoder().decode(carimboB64);
+            byteArrayInputStream = new ByteArrayInputStream(imageBytes);
+            BufferedImage carimbo = ImageIO.read(byteArrayInputStream);
 
             int width = planta.getWidth();
             int height = planta.getHeight();
@@ -94,10 +95,54 @@ public class main {
 
             graphics.dispose();
 
-            String location = diretorio+"/Downloads/"+"plantaautenticada.png";
-            File outputfile = new File(location);
-            ImageIO.write(bufferedImage, "PNG", outputfile);
-            return location;
+            ByteArrayOutputStream outputImageStream = new ByteArrayOutputStream();
+            ImageIO.write(bufferedImage, "PNG", outputImageStream);
+
+            return Base64.getEncoder().encodeToString(outputImageStream.toByteArray());
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return "";
+    }
+
+    public static String insertImageIntoPDF(String plantaCarimbada, String pdfOriginal) {
+        byte[] imageBytes, pdfBytes;
+        imageBytes = Base64.getDecoder().decode(plantaCarimbada);
+        pdfBytes = Base64.getDecoder().decode(pdfOriginal);
+        try {
+            PDDocument document = PDDocument.load(pdfBytes);
+            PDPage page = document.getPage(0);
+            PDImageXObject pdImageXObject = PDImageXObject.createFromByteArray(document, imageBytes, "Planta Autenticada");
+            PDPageContentStream contentStream = new PDPageContentStream(document, page);
+            contentStream.drawImage(pdImageXObject, pdImageXObject.getWidth(), pdImageXObject.getHeight());
+            contentStream.close();
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            document.save(outputStream);
+            document.close();
+            return Base64.getEncoder().encodeToString(outputStream.toByteArray());
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return "";
+    }
+
+    public static String convertPDFTobase64(String pdfDir) {
+        try {
+            byte[] inFileBytes = Files.readAllBytes(Paths.get(pdfDir));
+            return Base64.getEncoder().encodeToString(inFileBytes);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return "";
+    }
+
+    public static String converteImageToBase64(String imageDir) {
+        try {
+            BufferedImage bufferedImage = ImageIO.read(new File(imageDir));
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            ImageIO.write(bufferedImage, "PNG", outputStream);
+            return Base64.getEncoder().encodeToString(outputStream.toByteArray());
         } catch (IOException e) {
             e.printStackTrace();
         }
